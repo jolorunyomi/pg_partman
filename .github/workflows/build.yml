@@ -1,0 +1,66 @@
+name: Build Extension
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  build:
+    name: Build Extension
+    runs-on: ${{ matrix.os }}
+    container:
+      image: postgres:${{ matrix.postgres }}-buster
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [9.6, 10, 11, 12]
+        os: [ubuntu-latest]
+        experimental: [false]
+        include:
+          - postgres: 13
+            os: ubuntu-latest
+            experimental: true
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+      - name: apt update
+        run: apt-get update
+      - name: install dependencies
+        run: apt-get install -y build-essential postgresql-server-dev-${{ matrix.postgres }} dpkg-dev git
+      - name: build extension
+        run: make install
+      - name: package artifacts
+        run: |
+          mkdir -p postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/usr/share/postgresql/${{ matrix.postgres }}/extension \
+            postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/usr/share/doc/postgresql-doc-${{ matrix.postgres }}/extension \
+            postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/usr/lib/postgresql/${{ matrix.postgres }}/{bin, lib}
+
+          cp /usr/share/postgresql/${{ matrix.postgres }}/extension/pg_partman* \
+            postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/usr/share/postgresql/${{ matrix.postgres }}/extension/
+          cp /usr/share/doc/postgresql-doc-${{ matrix.postgres }}/extension/pg_partman* \
+            postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/usr/share/doc/postgresql-doc-${{ matrix.postgres }}/extension/
+
+          mkdir -p postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/DEBIAN
+      - name: create release info
+        run: | 
+          cat << EOF > postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64/DEBIAN/control
+          Package: pg-partman
+          Version: 1-${{ github.sha }}
+          Architecture: amd64
+          Maintainer: Joseph Olorunyomi <joseph.cloudengineer@gmail.com>
+          Description: Partition management extension for PostgreSQL.
+          EOF
+      - name: build package
+        run:  dpkg-deb --build --root-owner-group postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64
+
+      - name: test install package
+        run: dpkg -i postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64.deb
+      
+      - name: archive deb package
+        uses: actions/upload-artifact@v2
+        with:
+          name: postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64.deb
+          path: postgres-${{ matrix.postgres }}-pg-partman-${{ github.sha }}_amd64.deb
